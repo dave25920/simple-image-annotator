@@ -1,4 +1,4 @@
-# Annotate
+# Simple Image Annotator
 
 A small desktop editor for pointing at things in a picture. Open an image, drop arrows and short notes on it, and export a flattened PNG or JPEG.
 
@@ -58,15 +58,15 @@ PyInstaller builds an executable for the operating system it runs on, so this st
 build.bat
 ```
 
-That installs the app and PyInstaller, then runs `annotate.spec`. The result is a single file: `dist\Annotate.exe`.
+That installs the app and PyInstaller, then runs `SimpleImageAnnotator.spec`. The result is a single file: `dist\SimpleImageAnnotator.exe`.
 
 A one-folder build, which starts a little faster, is:
 
 ```bat
-python -m PyInstaller --noconfirm --clean --windowed --name Annotate main.py
+python -m PyInstaller --noconfirm --clean --windowed --name SimpleImageAnnotator main.py
 ```
 
-The program is `dist\Annotate\Annotate.exe`.
+The program is `dist\SimpleImageAnnotator\SimpleImageAnnotator.exe`.
 
 ## Layout
 
@@ -74,7 +74,7 @@ The program is `dist\Annotate\Annotate.exe`.
 main.py                 starts the app
 annotate/               window, scene, text and arrow items, undo
 tests/                  headless tests
-annotate.spec           PyInstaller one-file spec
+SimpleImageAnnotator.spec   PyInstaller one-file spec
 build.bat               Windows build script
 ```
 

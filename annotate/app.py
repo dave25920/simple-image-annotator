@@ -8,6 +8,7 @@ import sys
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QApplication
 
+from annotate import APP_NAME
 from annotate.main_window import MainWindow
 from annotate.style import APP_STYLESHEET, app_font_family
 from annotate.view import is_image_path
@@ -16,8 +17,9 @@ from annotate.view import is_image_path
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv if argv is None else argv)
     app = QApplication(args)
-    app.setApplicationName("Annotate")
-    app.setOrganizationName("Annotate")
+    app.setApplicationName(APP_NAME)
+    app.setApplicationDisplayName(APP_NAME)
+    app.setOrganizationName(APP_NAME)
     app.setStyle("Fusion")
     app.setStyleSheet(APP_STYLESHEET)
     font = QFont(app_font_family())

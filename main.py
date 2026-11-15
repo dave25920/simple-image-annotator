@@ -1,4 +1,4 @@
-"""Run the Annotate desktop app: ``python main.py``."""
+"""Run Simple Image Annotator: ``python main.py``."""
 
 import sys
 

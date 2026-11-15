@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from annotate import APP_NAME
 from annotate.colors import PALETTE
 from annotate.dialogs import JpegQualityDialog, ResizeImageDialog
 from annotate.geometry import normalize_angle
@@ -74,7 +75,7 @@ class ColorSwatch(QToolButton):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Annotate")
+        self.setWindowTitle(APP_NAME)
         self.setWindowIcon(_app_icon())
         self.resize(1180, 760)
         self.setMinimumSize(880, 560)
@@ -117,7 +118,7 @@ class MainWindow(QMainWindow):
             return False
         self._source_path = path
         self._last_dir = os.path.dirname(path)
-        self.setWindowTitle(f"Annotate — {os.path.basename(path)}")
+        self.setWindowTitle(f"{APP_NAME} — {os.path.basename(path)}")
         self.view.request_fit()
         self._refresh_status()
         self._refresh_actions()
@@ -248,6 +249,9 @@ class MainWindow(QMainWindow):
         self.outline_action.setToolTip("Thin contrasting outline so marks stay readable")
         self.outline_action.toggled.connect(self._on_outline)
 
+        self.about_action = QAction(f"About {APP_NAME}", self)
+        self.about_action.triggered.connect(self._about)
+
     def _build_toolbars(self) -> None:
         file_bar = QToolBar("File", self)
         file_bar.setObjectName("fileBar")
@@ -340,6 +344,9 @@ class MainWindow(QMainWindow):
         tools_menu.addSeparator()
         tools_menu.addAction(self.outline_action)
 
+        help_menu = self.menuBar().addMenu("Help")
+        help_menu.addAction(self.about_action)
+
     def _build_status(self) -> None:
         self._hint = QLabel("Open an image to start annotating.")
         self._size_label = QLabel("No image")
@@ -373,6 +380,15 @@ class MainWindow(QMainWindow):
         self.scene.clearSelection()
         item.setSelected(True)
         self.set_tool("select")
+
+    def _about(self) -> None:
+        QMessageBox.about(
+            self,
+            f"About {APP_NAME}",
+            f"{APP_NAME}\n\n"
+            "Point at things in a picture with arrows and short notes, "
+            "then export a flattened PNG or JPEG.",
+        )
 
     def _open_dialog(self) -> None:
         path, _selected = QFileDialog.getOpenFileName(self, "Open image", self._last_dir, OPEN_FILTER)

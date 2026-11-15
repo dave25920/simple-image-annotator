@@ -1,6 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 # One-file windowed build. Run on Windows: build.bat
-# Produces dist/Annotate.exe
+# Produces dist/SimpleImageAnnotator.exe
 
 a = Analysis(
     ['main.py'],
@@ -23,7 +23,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='Annotate',
+    name='SimpleImageAnnotator',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

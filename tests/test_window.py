@@ -3,6 +3,7 @@ from PySide6.QtGui import QImage, QColor
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
+from annotate import APP_NAME
 from annotate.items import AnnotationTextItem
 from annotate.main_window import MainWindow
 
@@ -17,12 +18,14 @@ def test_window_opens_image_and_places_marks(qapp, tmp_path):
     path = tmp_path / "plate.png"
     _save_image(path)
     window = MainWindow()
+    assert window.windowTitle() == APP_NAME
     window.resize(1000, 700)
     window.show()
     qapp.processEvents()
     assert window.open_path(str(path), confirm=False)
     assert window.scene.image_size() == (140, 90)
-    assert "plate.png" in window.windowTitle()
+    assert window.windowTitle() == f"{APP_NAME} — plate.png"
+    assert window.about_action.text() == f"About {APP_NAME}"
 
     window.view.place_text.emit(QPointF(18, 16))
     qapp.processEvents()
