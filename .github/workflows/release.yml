@@ -1,0 +1,75 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Version tag to publish, such as v1.0.0. Required unless this run is already on a v* tag."
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python packages
+        run: python -m pip install -r requirements.txt -r requirements-build.txt
+
+      - name: Build executable
+        run: python -m PyInstaller --noconfirm --clean SimpleImageAnnotator.spec
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SimpleImageAnnotator
+          path: dist/SimpleImageAnnotator.exe
+          if-no-files-found: error
+
+      - name: Publish GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            TAG="${GITHUB_REF_NAME}"
+          else
+            TAG="${INPUT_TAG}"
+          fi
+          TAG="${TAG#"${TAG%%[![:space:]]*}"}"
+          TAG="${TAG%"${TAG##*[![:space:]]}"}"
+          if [[ ! "${TAG}" =~ ^v ]]; then
+            echo "A version tag is required (for example v1.0.0)."
+            echo "Push a v* tag, or set the tag input when running this workflow manually."
+            exit 1
+          fi
+          test -f dist/SimpleImageAnnotator.exe
+          NOTES="$(cat <<EOF
+          Windows build of Simple Image Annotator.
+
+          Download SimpleImageAnnotator.exe. Python is not required.
+
+          Windows SmartScreen may warn because this executable is unsigned. Click More info, then Run anyway.
+          EOF
+          )"
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release upload "${TAG}" dist/SimpleImageAnnotator.exe --clobber
+          else
+            gh release create "${TAG}" dist/SimpleImageAnnotator.exe \
+              --title "${TAG}" \
+              --target "${GITHUB_SHA}" \
+              --notes "${NOTES}"
+          fi
