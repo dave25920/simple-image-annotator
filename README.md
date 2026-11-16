@@ -4,6 +4,12 @@ A small desktop editor for pointing at things in a picture. Open an image, drop 
 
 Annotations are real objects: select them, drag them, and use the handles to resize or rotate.
 
+## Download
+
+Download the Windows app from the [Releases page](https://github.com/dave25920/simple-image-annotator/releases/latest). Get `SimpleImageAnnotator.exe`. Python does not need to be installed.
+
+Windows SmartScreen may warn because the executable is unsigned. Click **More info**, then **Run anyway**.
+
 ## Run
 
 Python 3.10 or newer.
@@ -52,7 +58,7 @@ python -m pytest
 
 ## Build a Windows app
 
-PyInstaller builds an executable for the operating system it runs on, so this step is done on Windows.
+PyInstaller builds an executable for the operating system it runs on, so this step is done on Windows. Pushes of `v*` tags also build `SimpleImageAnnotator.exe` on GitHub Actions and attach it to a GitHub Release.
 
 ```bat
 build.bat
