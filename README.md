@@ -1,6 +1,6 @@
 # Simple Image Annotator
 
-A small desktop editor for pointing at things in a picture. Open an image, drop arrows and short notes on it, and export a flattened PNG or JPEG.
+A small desktop editor for pointing at things in a picture. Open an image, drop arrows, circles, and short notes on it, and export a flattened PNG or JPEG.
 
 Annotations are real objects: select them, drag them, and use the handles to resize or rotate.
 
@@ -28,10 +28,13 @@ You can also pass an image path: `python main.py photo.png`.
 | Open | File → Open, or drop a PNG, JPG/JPEG, BMP, or WebP onto the window |
 | Text | Text tool (T), then click the image. Double-click existing text to edit it. |
 | Arrow | Arrow tool (A). Click to drop one, or drag to aim it. |
+| Double arrow | Double Arrow tool (D). Click to drop one, or drag to aim it. A head sits at each end. |
+| Circle | Circle tool (C). Click to drop a circle, or drag to draw an oval. Hold Shift while dragging to keep it circular. |
 | Move | Select tool (V), then drag. Arrow keys nudge the selection; Shift nudges by 10 px. |
 | Text size | Font box, the corner handle, or Ctrl+wheel while the pointer is over the selected text |
-| Arrow length and thickness | Length and Thick boxes, or the handles on the tip and the side of the shaft |
-| Rotate | Angle box, or the round handle above the arrow. Hold Shift to snap to 15°. |
+| Arrow length and thickness | Length and Thick boxes, or the handles on the tip and the side of the shaft. A double arrow uses the same controls. |
+| Oval size and stroke | Width, Height, and Thick boxes, or the handles on the right, bottom, and outer edge. Ctrl+wheel scales the selected oval. |
+| Rotate | Angle box, or the round handle above the arrow or oval. Hold Shift to snap to 15°. |
 | Color | Black, White, or Green. The choice applies to the selection and to the next object. |
 | Outline | Thin contrasting edge so marks stay readable. On by default. |
 | View zoom | Ctrl+wheel over empty canvas, or Zoom in / Zoom out. Fit is Ctrl+0. Actual pixels is Ctrl+1. Zoom does not change the file. |
@@ -78,7 +81,7 @@ The program is `dist\SimpleImageAnnotator\SimpleImageAnnotator.exe`.
 
 ```
 main.py                 starts the app
-annotate/               window, scene, text and arrow items, undo
+annotate/               window, scene, text, arrow, and oval items, undo
 tests/                  headless tests
 SimpleImageAnnotator.spec   PyInstaller one-file spec
 build.bat               Windows build script

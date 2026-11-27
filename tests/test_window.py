@@ -1,10 +1,12 @@
+import pytest
 from PySide6.QtCore import QPointF, Qt
 from PySide6.QtGui import QImage, QColor
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
 from annotate import APP_NAME
-from annotate.items import AnnotationTextItem
+from annotate import __version__
+from annotate.items import AnnotationTextItem, DoubleArrowItem, EllipseItem
 from annotate.main_window import MainWindow
 
 
@@ -19,6 +21,7 @@ def test_window_opens_image_and_places_marks(qapp, tmp_path):
     _save_image(path)
     window = MainWindow()
     assert window.windowTitle() == APP_NAME
+    assert __version__ == "1.1.0"
     window.resize(1000, 700)
     window.show()
     qapp.processEvents()
@@ -38,6 +41,29 @@ def test_window_opens_image_and_places_marks(qapp, tmp_path):
     qapp.processEvents()
     assert len(window.scene.annotation_items()) == 2
     assert window.view.tool() == "select"
+
+    window.set_tool("double")
+    assert window.double_arrow_action.isChecked()
+    assert window.view.tool() == "double"
+    window.view.place_double_arrow.emit(QPointF(20, 70), QPointF(100, 70))
+    qapp.processEvents()
+    marks = window.scene.annotation_items()
+    assert isinstance(marks[-1], DoubleArrowItem)
+    assert window.view.tool() == "select"
+
+    window.set_tool("circle")
+    assert window.circle_action.isChecked()
+    assert window.circle_action.shortcut().toString() == "C"
+    assert window.double_arrow_action.shortcut().toString() == "D"
+    window.view.place_ellipse.emit(QPointF(15, 15), QPointF(70, 55), False)
+    qapp.processEvents()
+    oval = window.scene.annotation_items()[-1]
+    assert isinstance(oval, EllipseItem)
+    assert oval.width() == pytest.approx(55, abs=0.6)
+    assert oval.height() == pytest.approx(40, abs=0.6)
+    assert window.view.tool() == "select"
+    assert window.height_spin.isEnabled()
+    assert window.length_label.text() == "Width"
     window.close()
     qapp.processEvents()
 

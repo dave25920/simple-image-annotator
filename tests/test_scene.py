@@ -7,7 +7,7 @@ from PySide6.QtGui import QColor, QImage, QPainter
 from PySide6.QtWidgets import QGraphicsSceneMouseEvent
 
 from annotate.dialogs import ResizeImageDialog
-from annotate.items import AnnotationTextItem, ArrowItem
+from annotate.items import AnnotationTextItem, ArrowItem, DoubleArrowItem, EllipseItem
 from annotate.scene import AnnotationScene
 from annotate.view import AnnotationView, is_image_path
 
@@ -323,6 +323,164 @@ def test_resize_dialog_links_fields():
     percent = ResizeImageDialog(200, 100)
     percent.width_pct.setValue(50)
     assert percent.result_size() == (100, 50)
+
+
+def test_double_arrow_has_a_head_at_each_end():
+    scene = scene_with(400, 220)
+    single = scene.add_arrow(QPointF(200, 80), length=160, thickness=12, rotation=0, outline=False)
+    double = scene.add_double_arrow(QPointF(200, 150), length=160, thickness=12, rotation=0, outline=False)
+    assert isinstance(double, DoubleArrowItem)
+    assert isinstance(double, ArrowItem)
+    # Beside the left end: inside the second head, outside the single arrow's shaft.
+    left = QPointF(-40, 10)
+    assert double._path.contains(left)
+    assert not single._path.contains(left)
+    assert double._path.contains(QPointF(160 / 2.0 - 4, 0))
+    assert double._path.contains(QPointF(-160 / 2.0 + 4, 0))
+
+
+def test_double_arrow_color_rotate_scale_and_delete():
+    scene = scene_with(360, 240)
+    arrow = scene.add_double_arrow(QPointF(180, 100), length=100, thickness=14, rotation=0, color="#000000")
+    arrow.setSelected(True)
+    scene.apply_color("#00a33a")
+    scene.apply_rotation(45)
+    scene.apply_length(140)
+    scene.apply_thickness(20)
+    assert arrow.color().name().lower() == "#00a33a"
+    assert arrow.rotation() == pytest.approx(45)
+    assert arrow.length() == pytest.approx(140)
+    assert arrow.thickness() == pytest.approx(20)
+    aimed = scene.add_double_arrow_between(QPointF(20, 40), QPointF(120, 40))
+    tip = aimed.mapToScene(QPointF(aimed.length() / 2.0, 0))
+    tail = aimed.mapToScene(QPointF(-aimed.length() / 2.0, 0))
+    assert tip.x() == pytest.approx(120, abs=1.5)
+    assert tail.x() == pytest.approx(20, abs=1.5)
+    scene.clearSelection()
+    arrow.setSelected(True)
+    scene.delete_selected()
+    assert arrow not in scene.annotation_items()
+    scene.undo_stack.undo()
+    assert arrow in scene.annotation_items()
+    assert scene.resize_image(180, 120)
+    assert arrow.pos().x() == pytest.approx(90, abs=1.2)
+    assert arrow.length() == pytest.approx(70, abs=1.2)
+
+
+def test_oval_is_unfilled_and_resizes_on_both_axes():
+    scene = scene_with(400, 300, "#ffffff")
+    oval = scene.add_ellipse(
+        QPointF(180, 140),
+        width=120,
+        height=80,
+        thickness=16,
+        color="#00a33a",
+        outline=False,
+    )
+    assert isinstance(oval, EllipseItem)
+    left_before = oval.mapToScene(QPointF(-60, 0))
+    oval.set_width(180, anchor="left")
+    left_after = oval.mapToScene(QPointF(-90, 0))
+    assert left_after.x() == pytest.approx(left_before.x(), abs=0.6)
+    assert oval.width() == pytest.approx(180)
+    top_before = oval.mapToScene(QPointF(0, -40))
+    oval.set_height(120, anchor="top")
+    top_after = oval.mapToScene(QPointF(0, -60))
+    assert top_after.y() == pytest.approx(top_before.y(), abs=0.6)
+    assert oval.height() == pytest.approx(120)
+
+    dragged = scene.add_ellipse_between(QPointF(10, 20), QPointF(90, 50))
+    assert dragged.width() == pytest.approx(80)
+    assert dragged.height() == pytest.approx(30)
+    assert dragged.pos().x() == pytest.approx(50)
+    circle = scene.add_ellipse_between(QPointF(200, 20), QPointF(240, 100), constrain=True)
+    assert circle.width() == pytest.approx(circle.height())
+
+    oval.setSelected(True)
+    scene.apply_color("#000000")
+    scene.apply_thickness(10)
+    assert oval.color().name().lower() == "#000000"
+    assert oval.thickness() == pytest.approx(10)
+    scene.apply_color("#00a33a")
+    scene.apply_thickness(16)
+    oval.setSelected(True)
+    exported = scene.render_image()
+    assert not _near(exported,  int(oval.pos().x()), int(oval.pos().y()), _is_green)
+    rim_x = int(round(oval.pos().x()))
+    rim_y = int(round(oval.pos().y() - oval.height() / 2.0))
+    assert _near(exported, rim_x, rim_y, _is_green)
+
+
+def test_oval_export_hides_handles_and_resize_scales_it():
+    scene = scene_with(240, 180, "#ffffff")
+    oval = scene.add_ellipse(
+        QPointF(120, 90),
+        width=100,
+        height=60,
+        thickness=12,
+        rotation=0,
+        color="#000000",
+        outline=False,
+    )
+    oval.setSelected(True)
+    exported = scene.render_image()
+    assert oval.isSelected()
+    assert not _near(exported, 120, 90, _is_blue, radius=6)
+    chrome = QImage(240, 180, QImage.Format.Format_ARGB32)
+    chrome.fill(QColor("#ffffff"))
+    painter = QPainter(chrome)
+    scene.exporting = False
+    from PySide6.QtCore import QRectF
+
+    scene.render(painter, QRectF(0, 0, 240, 180), QRectF(0, 0, 240, 180))
+    painter.end()
+    assert images_differ(exported, chrome)
+
+    assert scene.resize_image(120, 180)
+    assert oval.pos().x() == pytest.approx(60, abs=1.0)
+    assert oval.pos().y() == pytest.approx(90, abs=1.0)
+    assert oval.width() == pytest.approx(50, abs=1.0)
+    assert oval.height() == pytest.approx(60, abs=1.0)
+
+
+def test_double_arrow_exports_ink_at_both_tips():
+    scene = scene_with(320, 160, "#ffffff")
+    scene.add_double_arrow(
+        QPointF(160, 80),
+        length=140,
+        thickness=22,
+        rotation=0,
+        color="#000000",
+        outline=False,
+    )
+    exported = scene.render_image()
+    assert _near(exported, 160 - 50, 80, _is_dark)
+    assert _near(exported, 160 + 50, 80, _is_dark)
+    assert _near(exported, 160, 80, _is_dark)
+
+
+def _is_green(color: QColor) -> bool:
+    return color.green() > 120 and color.green() > color.red() + 40 and color.green() > color.blue() + 40
+
+
+def _is_dark(color: QColor) -> bool:
+    return color.red() < 80 and color.green() < 80 and color.blue() < 80
+
+
+def _is_blue(color: QColor) -> bool:
+    return color.blue() > 160 and color.red() < 80 and color.green() < 150
+
+
+def _near(image: QImage, x: int, y: int, predicate, radius: int = 3) -> bool:
+    for dy in range(-radius, radius + 1):
+        for dx in range(-radius, radius + 1):
+            px = x + dx
+            py = y + dy
+            if px < 0 or py < 0 or px >= image.width() or py >= image.height():
+                continue
+            if predicate(image.pixelColor(px, py)):
+                return True
+    return False
 
 
 def QRectF_scene():
