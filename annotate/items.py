@@ -1,4 +1,4 @@
-"""Movable text and arrow annotations.
+"""Movable text, arrow, and oval annotations.
 
 Coordinates are image pixels. The view's zoom transform is separate, so a
 handle that should stay about 7 screen pixels wide divides by the view scale.
@@ -37,6 +37,8 @@ MIN_FONT = 8.0
 MAX_FONT = 400.0
 MIN_LENGTH = 16.0
 MAX_LENGTH = 8000.0
+MIN_SPAN = 16.0
+MAX_SPAN = 8000.0
 MIN_THICKNESS = 2.0
 MAX_THICKNESS = 240.0
 
@@ -65,6 +67,33 @@ def build_arrow_path(length: float, thickness: float) -> QPainterPath:
     path.lineTo(base, half_head)
     path.lineTo(base, half_shaft)
     path.lineTo(tail, half_shaft)
+    path.closeSubpath()
+    return path
+
+
+def build_double_arrow_path(length: float, thickness: float) -> QPainterPath:
+    """Arrow with a head at each end. Both heads stay inside the length."""
+
+    metrics = arrow_metrics(length, thickness, heads=2)
+    length = metrics["length"]
+    half_shaft = metrics["thickness"] / 2.0
+    head_len = min(metrics["head_len"], length * 0.45)
+    half_head = metrics["head_w"] / 2.0
+    left_tip = -length / 2.0
+    right_tip = length / 2.0
+    left_base = left_tip + head_len
+    right_base = right_tip - head_len
+    path = QPainterPath()
+    path.moveTo(left_tip, 0.0)
+    path.lineTo(left_base, -half_head)
+    path.lineTo(left_base, -half_shaft)
+    path.lineTo(right_base, -half_shaft)
+    path.lineTo(right_base, -half_head)
+    path.lineTo(right_tip, 0.0)
+    path.lineTo(right_base, half_head)
+    path.lineTo(right_base, half_shaft)
+    path.lineTo(left_base, half_shaft)
+    path.lineTo(left_base, half_head)
     path.closeSubpath()
     return path
 
@@ -445,7 +474,7 @@ class ArrowItem(QGraphicsObject):
         self._thickness = float(thickness)
         self._color = QColor(color)
         self._outline = bool(outline)
-        self._path = build_arrow_path(self._length, self._thickness)
+        self._path = self._make_path()
         self._drag = None
         self._start_props = None
         self._press_scene = QPointF()
@@ -491,7 +520,7 @@ class ArrowItem(QGraphicsObject):
         self._thickness = float(props["thickness"])
         self._color = QColor(props["color"])
         self._outline = bool(props["outline"])
-        self._path = build_arrow_path(self._length, self._thickness)
+        self._path = self._make_path()
         self.setRotation(float(props["rotation"]))
         x, y = props["pos"]
         self.setPos(float(x), float(y))
@@ -523,7 +552,7 @@ class ArrowItem(QGraphicsObject):
             return
         self.prepareGeometryChange()
         self._length = length
-        self._path = build_arrow_path(self._length, self._thickness)
+        self._path = self._make_path()
         if tail is not None:
             current = self.mapToScene(QPointF(-self._length / 2.0, 0.0))
             delta = tail - current
@@ -537,7 +566,7 @@ class ArrowItem(QGraphicsObject):
             return
         self.prepareGeometryChange()
         self._thickness = thickness
-        self._path = build_arrow_path(self._length, self._thickness)
+        self._path = self._make_path()
         self.update()
 
     def scale_with_image(self, sx: float, sy: float) -> None:
@@ -689,6 +718,9 @@ class ArrowItem(QGraphicsObject):
         self.setCursor(cursors.get(handle, Qt.CursorShape.SizeAllCursor))
         event.accept()
 
+    def _make_path(self) -> QPainterPath:
+        return build_arrow_path(self._length, self._thickness)
+
     def _handle_radius(self) -> float:
         return 7.0 / view_scale_of(self)
 
@@ -754,3 +786,400 @@ class ArrowItem(QGraphicsObject):
         painter.setBrush(QColor("#ffffff"))
         for center in centers.values():
             painter.drawEllipse(center, radius, radius)
+
+
+class DoubleArrowItem(ArrowItem):
+    """Same as an arrow, with a head at both ends."""
+
+    def _make_path(self) -> QPainterPath:
+        return build_double_arrow_path(self._length, self._thickness)
+
+
+class EllipseItem(QGraphicsObject):
+    """Unfilled oval. Width and height resize independently."""
+
+    def __init__(
+        self,
+        width: float = 120,
+        height: float = 120,
+        thickness: float = 18,
+        color: QColor | str = "#000000",
+        outline: bool = True,
+        rotation: float = 0,
+    ):
+        super().__init__()
+        self._width = float(width)
+        self._height = float(height)
+        self._thickness = float(thickness)
+        self._color = QColor(color)
+        self._outline = bool(outline)
+        self._drag = None
+        self._start_props = None
+        self._press_scene = QPointF()
+        self._pointer_angle = 0.0
+        self._start_rotation = 0.0
+        self._drag_anchor = QPointF()
+        self._move_origins = {}
+        self.setRotation(rotation)
+        self.setFlags(
+            QGraphicsItem.GraphicsItemFlag.ItemIsMovable
+            | QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
+            | QGraphicsItem.GraphicsItemFlag.ItemIsFocusable
+            | QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges
+        )
+        self.setAcceptHoverEvents(True)
+        self.setCursor(Qt.CursorShape.SizeAllCursor)
+
+    def width(self) -> float:
+        return self._width
+
+    def height(self) -> float:
+        return self._height
+
+    def thickness(self) -> float:
+        return self._thickness
+
+    def color(self) -> QColor:
+        return QColor(self._color)
+
+    def outline_enabled(self) -> bool:
+        return self._outline
+
+    def properties(self) -> dict:
+        return {
+            "pos": (float(self.pos().x()), float(self.pos().y())),
+            "rotation": float(self.rotation()),
+            "width": float(self._width),
+            "height": float(self._height),
+            "thickness": float(self._thickness),
+            "color": color_hex(self._color),
+            "outline": bool(self._outline),
+        }
+
+    def apply_properties(self, props: dict) -> None:
+        self.prepareGeometryChange()
+        self._width = float(props["width"])
+        self._height = float(props["height"])
+        self._thickness = float(props["thickness"])
+        self._color = QColor(props["color"])
+        self._outline = bool(props["outline"])
+        self.setRotation(float(props["rotation"]))
+        x, y = props["pos"]
+        self.setPos(float(x), float(y))
+        self.update()
+
+    def set_color(self, color: QColor | str) -> None:
+        self._color = QColor(color)
+        self.update()
+
+    def set_outline(self, enabled: bool) -> None:
+        self.prepareGeometryChange()
+        self._outline = bool(enabled)
+        self.update()
+
+    def set_angle(self, angle: float) -> None:
+        self.setRotation(float(angle))
+        self.update()
+
+    def set_width(self, width: float, anchor: str = "center", edge_scene: QPointF | None = None) -> None:
+        width = float(max(MIN_SPAN, min(MAX_SPAN, width)))
+        edge = None
+        if anchor == "left":
+            edge = (
+                QPointF(edge_scene)
+                if edge_scene is not None
+                else self.mapToScene(QPointF(-self._width / 2.0, 0.0))
+            )
+        if anchor == "center" and abs(width - self._width) < 0.04:
+            return
+        self.prepareGeometryChange()
+        self._width = width
+        if edge is not None:
+            current = self.mapToScene(QPointF(-self._width / 2.0, 0.0))
+            delta = edge - current
+            if abs(delta.x()) > 1e-4 or abs(delta.y()) > 1e-4:
+                self.setPos(self.pos() + delta)
+        self.update()
+
+    def set_height(self, height: float, anchor: str = "center", edge_scene: QPointF | None = None) -> None:
+        height = float(max(MIN_SPAN, min(MAX_SPAN, height)))
+        edge = None
+        if anchor == "top":
+            edge = (
+                QPointF(edge_scene)
+                if edge_scene is not None
+                else self.mapToScene(QPointF(0.0, -self._height / 2.0))
+            )
+        if anchor == "center" and abs(height - self._height) < 0.04:
+            return
+        self.prepareGeometryChange()
+        self._height = height
+        if edge is not None:
+            current = self.mapToScene(QPointF(0.0, -self._height / 2.0))
+            delta = edge - current
+            if abs(delta.x()) > 1e-4 or abs(delta.y()) > 1e-4:
+                self.setPos(self.pos() + delta)
+        self.update()
+
+    def set_size(self, width: float, height: float) -> None:
+        width = float(max(MIN_SPAN, min(MAX_SPAN, width)))
+        height = float(max(MIN_SPAN, min(MAX_SPAN, height)))
+        if abs(width - self._width) < 0.04 and abs(height - self._height) < 0.04:
+            return
+        self.prepareGeometryChange()
+        self._width = width
+        self._height = height
+        self.update()
+
+    def set_thickness(self, thickness: float) -> None:
+        thickness = float(max(MIN_THICKNESS, min(MAX_THICKNESS, thickness)))
+        if abs(thickness - self._thickness) < 0.04:
+            return
+        self.prepareGeometryChange()
+        self._thickness = thickness
+        self.update()
+
+    def scale_with_image(self, sx: float, sy: float) -> None:
+        center = self.mapToScene(QPointF(0.0, 0.0))
+        right = self.mapToScene(QPointF(self._width / 2.0, 0.0))
+        bottom = self.mapToScene(QPointF(0.0, self._height / 2.0))
+        center2 = QPointF(center.x() * sx, center.y() * sy)
+        right2 = QPointF(right.x() * sx, right.y() * sy)
+        bottom2 = QPointF(bottom.x() * sx, bottom.y() * sy)
+        vx = right2 - center2
+        vy = bottom2 - center2
+        props = self.properties()
+        props["pos"] = (center2.x(), center2.y())
+        props["width"] = max(MIN_SPAN, min(MAX_SPAN, 2.0 * math.hypot(vx.x(), vx.y())))
+        props["height"] = max(MIN_SPAN, min(MAX_SPAN, 2.0 * math.hypot(vy.x(), vy.y())))
+        props["rotation"] = math.degrees(math.atan2(vx.y(), vx.x()))
+        props["thickness"] = max(MIN_THICKNESS, min(MAX_THICKNESS, self._thickness * ((sx + sy) / 2.0)))
+        self.apply_properties(props)
+
+    def wheel_resize(self, steps: int) -> None:
+        old = self.properties()
+        factor = 1.1 ** steps
+        self.set_size(self._width * factor, self._height * factor)
+        self.set_thickness(self._thickness * factor)
+        scene = self.scene()
+        if scene is not None:
+            scene.push_properties([(self, old, self.properties())], "Scale oval", merge_key=("oval", id(self)))
+
+    def boundingRect(self) -> QRectF:
+        pad = self._stroke_pad()
+        rect = self._local_rect().adjusted(-pad, -pad, pad, pad)
+        if _show_chrome(self):
+            radius = self._handle_radius()
+            for center in self._handle_centers().values():
+                rect = rect.united(QRectF(center.x() - radius, center.y() - radius, radius * 2, radius * 2))
+        return rect
+
+    def shape(self) -> QPainterPath:
+        path = QPainterPath()
+        path.addEllipse(self._local_rect())
+        stroker = QPainterPathStroker()
+        stroker.setWidth(max(self._thickness, 12.0 / view_scale_of(self)))
+        path.addPath(stroker.createStroke(path))
+        if _show_chrome(self):
+            radius = self._handle_radius() * 1.8
+            for center in self._handle_centers().values():
+                path.addEllipse(center, radius, radius)
+        return path
+
+    def paint(self, painter: QPainter, option, widget=None) -> None:
+        del option, widget
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        rect = self._local_rect()
+        if self._outline:
+            halo = QPen(contrasting_color(self._color))
+            halo.setWidthF(self._thickness + self._halo_extra() * 2.0)
+            halo.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            halo.setCapStyle(Qt.PenCapStyle.RoundCap)
+            painter.setPen(halo)
+            painter.drawEllipse(rect)
+        pen = QPen(self._color)
+        pen.setWidthF(self._thickness)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        painter.drawEllipse(rect)
+        if _show_chrome(self):
+            self._paint_chrome(painter)
+
+    def itemChange(self, change, value):
+        if change == QGraphicsItem.GraphicsItemChange.ItemSelectedHasChanged:
+            self.prepareGeometryChange()
+            if bool(value):
+                scene = self.scene()
+                if scene is not None and hasattr(scene, "raise_annotation"):
+                    scene.raise_annotation(self)
+        return super().itemChange(change, value)
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() != Qt.MouseButton.LeftButton:
+            event.ignore()
+            return
+        handle = self._hit_handle(event.pos()) if self.isSelected() else None
+        if handle:
+            self._drag = handle
+            self._start_props = self.properties()
+            self._press_scene = QPointF(event.scenePos())
+            center = self.mapToScene(QPointF(0.0, 0.0))
+            self._pointer_angle = math.degrees(
+                math.atan2(event.scenePos().y() - center.y(), event.scenePos().x() - center.x())
+            )
+            self._start_rotation = self.rotation()
+            if handle == "width":
+                self._drag_anchor = self.mapToScene(QPointF(-self._width / 2.0, 0.0))
+            elif handle == "height":
+                self._drag_anchor = self.mapToScene(QPointF(0.0, -self._height / 2.0))
+            self.setFocus(Qt.FocusReason.MouseFocusReason)
+            event.accept()
+            return
+        if not select_on_press(self, event):
+            event.accept()
+            return
+        self._drag = "move"
+        start_move(self, event)
+        self.setFocus(Qt.FocusReason.MouseFocusReason)
+        event.accept()
+
+    def mouseMoveEvent(self, event) -> None:
+        if self._drag == "width":
+            far = self.mapToScene(QPointF(self._width / 2.0, 0.0))
+            self.set_width(self._projected_span(event.scenePos(), self._drag_anchor, far), anchor="left", edge_scene=self._drag_anchor)
+            _emit_live(self)
+            event.accept()
+            return
+        if self._drag == "height":
+            far = self.mapToScene(QPointF(0.0, self._height / 2.0))
+            self.set_height(self._projected_span(event.scenePos(), self._drag_anchor, far), anchor="top", edge_scene=self._drag_anchor)
+            _emit_live(self)
+            event.accept()
+            return
+        if self._drag == "thickness":
+            gap = self._handle_radius() * 1.6
+            self.set_thickness((event.pos().x() - self._width / 2.0 - gap) * 2.0)
+            _emit_live(self)
+            event.accept()
+            return
+        if self._drag == "rotate":
+            self._apply_rotation(event.scenePos(), bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier))
+            _emit_live(self)
+            event.accept()
+            return
+        if self._drag == "move":
+            update_move(self, event)
+            _emit_live(self)
+            event.accept()
+            return
+        event.ignore()
+
+    def mouseReleaseEvent(self, event) -> None:
+        drag = self._drag
+        self._drag = None
+        labels = {
+            "width": "Oval width",
+            "height": "Oval height",
+            "thickness": "Oval thickness",
+            "rotate": "Rotate",
+        }
+        if drag in labels:
+            _commit_properties(self, self._start_props, labels[drag])
+            event.accept()
+            return
+        if drag == "move":
+            finish_move(self)
+            event.accept()
+            return
+        event.accept()
+
+    def hoverMoveEvent(self, event) -> None:
+        handle = self._hit_handle(event.pos()) if self.isSelected() else None
+        cursors = {
+            "rotate": Qt.CursorShape.CrossCursor,
+            "width": Qt.CursorShape.SizeHorCursor,
+            "height": Qt.CursorShape.SizeVerCursor,
+            "thickness": Qt.CursorShape.SizeHorCursor,
+        }
+        self.setCursor(cursors.get(handle, Qt.CursorShape.SizeAllCursor))
+        event.accept()
+
+    def _local_rect(self) -> QRectF:
+        return QRectF(-self._width / 2.0, -self._height / 2.0, self._width, self._height)
+
+    def _halo_extra(self) -> float:
+        return max(1.6, min(3.0, self._thickness * 0.12))
+
+    def _stroke_pad(self) -> float:
+        extra = self._halo_extra() if self._outline else 0.0
+        return self._thickness / 2.0 + extra + 1.5
+
+    def _handle_radius(self) -> float:
+        return 7.0 / view_scale_of(self)
+
+    def _handle_centers(self) -> dict[str, QPointF]:
+        radius = self._handle_radius()
+        return {
+            "width": QPointF(self._width / 2.0, 0.0),
+            "height": QPointF(0.0, self._height / 2.0),
+            "thickness": QPointF(self._width / 2.0 + self._thickness / 2.0 + radius * 1.6, 0.0),
+            "rotate": QPointF(0.0, -self._height / 2.0 - radius * 3.2),
+        }
+
+    def _hit_handle(self, pos: QPointF) -> str | None:
+        if not _show_chrome(self):
+            return None
+        radius = self._handle_radius() * 1.7
+        for name in ("rotate", "thickness", "width", "height"):
+            center = self._handle_centers()[name]
+            if abs(pos.x() - center.x()) <= radius and abs(pos.y() - center.y()) <= radius:
+                return name
+        return None
+
+    def _projected_span(self, scene_pos: QPointF, anchor: QPointF, far: QPointF) -> float:
+        axis_x = far.x() - anchor.x()
+        axis_y = far.y() - anchor.y()
+        magnitude = math.hypot(axis_x, axis_y)
+        if magnitude < 1e-3:
+            return magnitude
+        rel_x = scene_pos.x() - anchor.x()
+        rel_y = scene_pos.y() - anchor.y()
+        return (rel_x * axis_x + rel_y * axis_y) / magnitude
+
+    def _apply_rotation(self, scene_pos: QPointF, snap: bool) -> None:
+        center = self.mapToScene(QPointF(0.0, 0.0))
+        pointer = math.degrees(math.atan2(scene_pos.y() - center.y(), scene_pos.x() - center.x()))
+        delta = pointer - self._pointer_angle
+        while delta > 180.0:
+            delta -= 360.0
+        while delta < -180.0:
+            delta += 360.0
+        angle = self._start_rotation + delta
+        if snap:
+            angle = snap_angle(angle, 15.0)
+        self.setRotation(angle)
+
+    def _paint_chrome(self, painter: QPainter) -> None:
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        radius = self._handle_radius()
+        pen = QPen(QColor("#0067c0"))
+        pen.setCosmetic(True)
+        pen.setStyle(Qt.PenStyle.DashLine)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRect(self._local_rect())
+        centers = self._handle_centers()
+        solid = QPen(QColor("#0067c0"))
+        solid.setCosmetic(True)
+        solid.setWidthF(1.25)
+        painter.setPen(solid)
+        painter.drawLine(QPointF(0.0, -self._height / 2.0), centers["rotate"])
+        painter.setBrush(QColor("#ffffff"))
+        for center in centers.values():
+            painter.drawEllipse(center, radius, radius)
+
+
+def is_annotation(item) -> bool:
+    return isinstance(item, (AnnotationTextItem, ArrowItem, EllipseItem))

@@ -8,7 +8,8 @@ from PySide6.QtCore import QEvent, QPoint, QPointF, Qt, Signal
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import QGraphicsItem, QGraphicsView, QLabel
 
-from annotate.items import ArrowItem, AnnotationTextItem
+from annotate.geometry import ellipse_box
+from annotate.items import AnnotationTextItem, ArrowItem, DoubleArrowItem, EllipseItem, is_annotation
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
 
@@ -32,6 +33,8 @@ class AnnotationView(QGraphicsView):
     zoom_changed = Signal(float)
     place_text = Signal(QPointF)
     place_arrow = Signal(QPointF, QPointF)
+    place_double_arrow = Signal(QPointF, QPointF)
+    place_ellipse = Signal(QPointF, QPointF, bool)
     tool_requested = Signal(str)
     file_dropped = Signal(str)
 
@@ -40,9 +43,9 @@ class AnnotationView(QGraphicsView):
         self._tool = "select"
         self._zoom = 1.0
         self._fit_pending = False
-        self._arrow_dragging = False
-        self._arrow_start = QPointF()
-        self._preview: ArrowItem | None = None
+        self._drawing = False
+        self._draw_start = QPointF()
+        self._preview: ArrowItem | EllipseItem | None = None
         self._suppress_release = False
         self._panning = False
         self._pan_pos = QPoint()
@@ -85,7 +88,7 @@ class AnnotationView(QGraphicsView):
         return self._tool
 
     def set_tool(self, tool: str) -> None:
-        if tool != "arrow":
+        if tool != self._tool:
             self.cancel_preview()
         self._tool = tool
         if tool == "select":
@@ -135,7 +138,7 @@ class AnnotationView(QGraphicsView):
             self._fit_pending = True
 
     def cancel_preview(self) -> None:
-        self._arrow_dragging = False
+        self._drawing = False
         preview = self._preview
         self._preview = None
         if preview is not None and preview.scene() is not None:
@@ -215,12 +218,12 @@ class AnnotationView(QGraphicsView):
                 self._suppress_release = True
                 event.accept()
                 return
-        if event.button() == Qt.MouseButton.LeftButton and self._tool == "arrow":
+        if event.button() == Qt.MouseButton.LeftButton and self._tool in {"arrow", "double", "circle"}:
             pos = self._scene_pos(event)
             if self._over_image(pos):
-                self._arrow_dragging = True
-                self._arrow_start = pos
-                self._update_preview(pos)
+                self._drawing = True
+                self._draw_start = pos
+                self._update_preview(pos, bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier))
                 event.accept()
                 return
         super().mousePressEvent(event)
@@ -234,8 +237,11 @@ class AnnotationView(QGraphicsView):
             self.verticalScrollBar().setValue(self.verticalScrollBar().value() - delta.y())
             event.accept()
             return
-        if self._arrow_dragging:
-            self._update_preview(self._scene_pos(event))
+        if self._drawing:
+            self._update_preview(
+                self._scene_pos(event),
+                bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier),
+            )
             event.accept()
             return
         super().mouseMoveEvent(event)
@@ -250,18 +256,25 @@ class AnnotationView(QGraphicsView):
             self._suppress_release = False
             event.accept()
             return
-        if self._arrow_dragging and event.button() == Qt.MouseButton.LeftButton:
+        if self._drawing and event.button() == Qt.MouseButton.LeftButton:
             end = self._scene_pos(event)
-            start = QPointF(self._arrow_start)
+            start = QPointF(self._draw_start)
+            tool = self._tool
+            constrain = bool(event.modifiers() & Qt.KeyboardModifier.ShiftModifier)
             self.cancel_preview()
             if self._over_image(start):
-                self.place_arrow.emit(start, end)
+                if tool == "double":
+                    self.place_double_arrow.emit(start, end)
+                elif tool == "circle":
+                    self.place_ellipse.emit(start, end, constrain)
+                else:
+                    self.place_arrow.emit(start, end)
             event.accept()
             return
         super().mouseReleaseEvent(event)
 
     def keyPressEvent(self, event) -> None:
-        if self._arrow_dragging and event.key() == Qt.Key.Key_Escape:
+        if self._drawing and event.key() == Qt.Key.Key_Escape:
             self.cancel_preview()
             event.accept()
             return
@@ -311,7 +324,7 @@ class AnnotationView(QGraphicsView):
         pos = self.mapToScene(event.pos())
         target = None
         for item in scene.items(pos):
-            if isinstance(item, (AnnotationTextItem, ArrowItem)):
+            if is_annotation(item):
                 target = item
                 break
         if target is None:
@@ -334,7 +347,7 @@ class AnnotationView(QGraphicsView):
     def _on_image_changed(self) -> None:
         if self._preview is not None and self._preview.scene() is None:
             self._preview = None
-            self._arrow_dragging = False
+            self._drawing = False
         self._position_empty_hint()
 
     def _editing_text(self) -> bool:
@@ -357,34 +370,68 @@ class AnnotationView(QGraphicsView):
         if scene is None:
             return None
         for item in scene.items(self.mapToScene(view_pos)):
-            if isinstance(item, (AnnotationTextItem, ArrowItem)):
+            if is_annotation(item):
                 return item
         return None
 
-    def _update_preview(self, end: QPointF) -> None:
+    def _update_preview(self, end: QPointF, constrain: bool = False) -> None:
         scene = self.scene()
         if scene is None:
             return
         if self._preview is None:
-            self._preview = ArrowItem(
+            self._preview = self._make_preview(scene)
+            scene.addItem(self._preview)
+        start = self._draw_start
+        if self._tool == "circle" and isinstance(self._preview, EllipseItem):
+            center_x, center_y, width, height = ellipse_box(
+                start.x(),
+                start.y(),
+                end.x(),
+                end.y(),
+                constrain=constrain,
+                default_width=scene.default_ellipse_width,
+                default_height=scene.default_ellipse_height,
+            )
+            self._preview.set_size(width, height)
+            self._preview.setRotation(0.0)
+            self._preview.setPos(center_x, center_y)
+        else:
+            distance = math.hypot(end.x() - start.x(), end.y() - start.y())
+            if distance < 10.0:
+                self._preview.set_length(scene.default_arrow_length, anchor="center")
+                self._preview.setRotation(-32.0)
+                self._preview.setPos(start)
+            else:
+                self._preview.set_length(max(distance, 16.0), anchor="center")
+                self._preview.setRotation(math.degrees(math.atan2(end.y() - start.y(), end.x() - start.x())))
+                self._preview.setPos((start.x() + end.x()) / 2.0, (start.y() + end.y()) / 2.0)
+        self._preview.update()
+
+    def _make_preview(self, scene):
+        if self._tool == "circle":
+            item = EllipseItem(
+                width=40,
+                height=40,
+                thickness=scene.default_arrow_thickness,
+                color=scene.default_color,
+                outline=scene.default_outline,
+            )
+        elif self._tool == "double":
+            item = DoubleArrowItem(
                 length=40,
                 thickness=scene.default_arrow_thickness,
                 color=scene.default_color,
                 outline=scene.default_outline,
             )
-            self._preview.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
-            self._preview.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, False)
-            self._preview.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
-            self._preview.setZValue(scene.next_z())
-            scene.addItem(self._preview)
-        start = self._arrow_start
-        distance = math.hypot(end.x() - start.x(), end.y() - start.y())
-        if distance < 10.0:
-            self._preview.set_length(scene.default_arrow_length, anchor="center")
-            self._preview.setRotation(-32.0)
-            self._preview.setPos(start)
         else:
-            self._preview.set_length(max(distance, 16.0), anchor="center")
-            self._preview.setRotation(math.degrees(math.atan2(end.y() - start.y(), end.x() - start.x())))
-            self._preview.setPos((start.x() + end.x()) / 2.0, (start.y() + end.y()) / 2.0)
-        self._preview.update()
+            item = ArrowItem(
+                length=40,
+                thickness=scene.default_arrow_thickness,
+                color=scene.default_color,
+                outline=scene.default_outline,
+            )
+        item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, False)
+        item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, False)
+        item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
+        item.setZValue(scene.next_z())
+        return item

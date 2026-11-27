@@ -1,6 +1,6 @@
 import pytest
 
-from annotate.geometry import arrow_metrics, linked_dimensions, normalize_angle, snap_angle
+from annotate.geometry import arrow_metrics, ellipse_box, linked_dimensions, normalize_angle, snap_angle
 
 
 def test_percent_keeps_aspect_ratio():
@@ -56,3 +56,29 @@ def test_arrow_head_is_shorter_than_the_shaft_and_wider():
     assert metrics["head_w"] > metrics["thickness"]
     short = arrow_metrics(18, 8)
     assert short["head_len"] <= short["length"] * 0.62 + 0.01
+
+
+def test_double_arrow_heads_both_fit():
+    metrics = arrow_metrics(40, 16, heads=2)
+    assert metrics["head_len"] * 2 <= metrics["length"] + 0.01
+    assert metrics["shaft_len"] >= 0
+    long = arrow_metrics(200, 12, heads=2)
+    assert long["head_w"] > long["thickness"]
+    assert long["shaft_len"] > 0
+
+
+def test_ellipse_box_click_drops_the_default_and_drag_sets_corners():
+    assert ellipse_box(10, 20, 14, 22) == (10, 20, 120, 120)
+    center_x, center_y, width, height = ellipse_box(10, 20, 110, 80, default_width=50, default_height=40)
+    assert center_x == pytest.approx(60)
+    assert center_y == pytest.approx(50)
+    assert width == pytest.approx(100)
+    assert height == pytest.approx(60)
+
+
+def test_ellipse_box_shift_keeps_a_circle():
+    center_x, center_y, width, height = ellipse_box(0, 0, 40, 100, constrain=True)
+    assert width == pytest.approx(height)
+    assert width == pytest.approx(100)
+    assert center_x == pytest.approx(50)
+    assert center_y == pytest.approx(50)

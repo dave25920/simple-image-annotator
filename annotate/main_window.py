@@ -29,11 +29,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from annotate import APP_NAME
+from annotate import APP_NAME, __version__
 from annotate.colors import PALETTE
 from annotate.dialogs import JpegQualityDialog, ResizeImageDialog
 from annotate.geometry import normalize_angle
-from annotate.items import ArrowItem, AnnotationTextItem, build_arrow_path
+from annotate.items import AnnotationTextItem, ArrowItem, EllipseItem, build_arrow_path
 from annotate.scene import AnnotationScene
 from annotate.view import AnnotationView, is_image_path
 
@@ -77,7 +77,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle(APP_NAME)
         self.setWindowIcon(_app_icon())
-        self.resize(1180, 760)
+        self.resize(1280, 760)
         self.setMinimumSize(880, 560)
         self._source_path = ""
         self._last_dir = ""
@@ -129,7 +129,13 @@ class MainWindow(QMainWindow):
     def set_tool(self, tool: str) -> None:
         self._tool = tool
         self.view.set_tool(tool)
-        action = {"select": self.select_action, "text": self.text_action, "arrow": self.arrow_action}[tool]
+        action = {
+            "select": self.select_action,
+            "text": self.text_action,
+            "arrow": self.arrow_action,
+            "double": self.double_arrow_action,
+            "circle": self.circle_action,
+        }[tool]
         if not action.isChecked():
             action.setChecked(True)
         self._refresh_hint()
@@ -236,9 +242,29 @@ class MainWindow(QMainWindow):
         self.arrow_action.setToolTip("Click to drop an arrow, or drag to aim it (A)")
         self.arrow_action.triggered.connect(lambda: self.set_tool("arrow"))
 
+        self.double_arrow_action = QAction("Double Arrow", self)
+        self.double_arrow_action.setCheckable(True)
+        self.double_arrow_action.setShortcut(QKeySequence("D"))
+        self.double_arrow_action.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self.double_arrow_action.setToolTip("Click to drop a double-headed arrow, or drag to aim it (D)")
+        self.double_arrow_action.triggered.connect(lambda: self.set_tool("double"))
+
+        self.circle_action = QAction("Circle", self)
+        self.circle_action.setCheckable(True)
+        self.circle_action.setShortcut(QKeySequence("C"))
+        self.circle_action.setShortcutContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self.circle_action.setToolTip("Click to drop a circle, or drag to draw an oval (C). Shift keeps it circular.")
+        self.circle_action.triggered.connect(lambda: self.set_tool("circle"))
+
         self.tool_group = QActionGroup(self)
         self.tool_group.setExclusive(True)
-        for action in (self.select_action, self.text_action, self.arrow_action):
+        for action in (
+            self.select_action,
+            self.text_action,
+            self.arrow_action,
+            self.double_arrow_action,
+            self.circle_action,
+        ):
             self.tool_group.addAction(action)
             self.view.addAction(action)
         self.select_action.setChecked(True)
@@ -285,6 +311,8 @@ class MainWindow(QMainWindow):
         prop.addAction(self.select_action)
         prop.addAction(self.text_action)
         prop.addAction(self.arrow_action)
+        prop.addAction(self.double_arrow_action)
+        prop.addAction(self.circle_action)
         prop.addSeparator()
 
         self._swatches: list[ColorSwatch] = []
@@ -301,20 +329,26 @@ class MainWindow(QMainWindow):
         prop.addSeparator()
 
         self.font_spin = self._spin(8, 400, " pt", "Font size of the selected text, or the default for new text")
-        self.angle_spin = self._spin(-180, 180, "°", "Rotation of the selected arrow. Shift-drag the round handle to snap to 15°.")
+        self.angle_spin = self._spin(-180, 180, "°", "Rotation of the selected arrow or oval. Shift-drag the round handle to snap to 15°.")
         self.angle_spin.setWrapping(True)
-        self.length_spin = self._spin(16, 4000, " px", "Arrow length in pixels")
+        self.length_spin = self._spin(16, 4000, " px", "Arrow length, or oval width, in pixels")
         self.length_spin.setSingleStep(5)
-        self.thickness_spin = self._spin(2, 240, " px", "Arrow shaft thickness in pixels")
+        self.height_spin = self._spin(16, 4000, " px", "Oval height in pixels")
+        self.height_spin.setSingleStep(5)
+        self.thickness_spin = self._spin(2, 240, " px", "Arrow shaft thickness, or oval stroke thickness, in pixels")
         prop.addWidget(self._labeled("Font", self.font_spin))
         prop.addWidget(self._labeled("Angle", self.angle_spin))
-        prop.addWidget(self._labeled("Length", self.length_spin))
+        length_wrap = self._labeled("Length", self.length_spin)
+        self.length_label = length_wrap.findChild(QLabel)
+        prop.addWidget(length_wrap)
+        prop.addWidget(self._labeled("Height", self.height_spin))
         prop.addWidget(self._labeled("Thick", self.thickness_spin))
         self.addToolBar(Qt.ToolBarArea.TopToolBarArea, prop)
 
         self.font_spin.valueChanged.connect(self._on_font)
         self.angle_spin.valueChanged.connect(self._on_angle)
         self.length_spin.valueChanged.connect(self._on_length)
+        self.height_spin.valueChanged.connect(self._on_height)
         self.thickness_spin.valueChanged.connect(self._on_thickness)
 
     def _build_menus(self) -> None:
@@ -341,6 +375,8 @@ class MainWindow(QMainWindow):
         tools_menu.addAction(self.select_action)
         tools_menu.addAction(self.text_action)
         tools_menu.addAction(self.arrow_action)
+        tools_menu.addAction(self.double_arrow_action)
+        tools_menu.addAction(self.circle_action)
         tools_menu.addSeparator()
         tools_menu.addAction(self.outline_action)
 
@@ -356,6 +392,8 @@ class MainWindow(QMainWindow):
     def _connect(self) -> None:
         self.view.place_text.connect(self._place_text)
         self.view.place_arrow.connect(self._place_arrow)
+        self.view.place_double_arrow.connect(self._place_double_arrow)
+        self.view.place_ellipse.connect(self._place_ellipse)
         self.view.tool_requested.connect(self.set_tool)
         self.view.file_dropped.connect(self.open_path)
         self.view.zoom_changed.connect(lambda _zoom: self._refresh_status())
@@ -381,12 +419,24 @@ class MainWindow(QMainWindow):
         item.setSelected(True)
         self.set_tool("select")
 
+    def _place_double_arrow(self, start, end) -> None:
+        item = self.scene.add_double_arrow_between(start, end)
+        self.scene.clearSelection()
+        item.setSelected(True)
+        self.set_tool("select")
+
+    def _place_ellipse(self, start, end, constrain: bool) -> None:
+        item = self.scene.add_ellipse_between(start, end, constrain=constrain)
+        self.scene.clearSelection()
+        item.setSelected(True)
+        self.set_tool("select")
+
     def _about(self) -> None:
         QMessageBox.about(
             self,
             f"About {APP_NAME}",
-            f"{APP_NAME}\n\n"
-            "Point at things in a picture with arrows and short notes, "
+            f"{APP_NAME} {__version__}\n\n"
+            "Point at things in a picture with arrows, circles, and short notes, "
             "then export a flattened PNG or JPEG.",
         )
 
@@ -461,6 +511,11 @@ class MainWindow(QMainWindow):
             return
         self.scene.apply_length(value)
 
+    def _on_height(self, value: int) -> None:
+        if self._syncing or not self.height_spin.isEnabled():
+            return
+        self.scene.apply_height(value)
+
     def _on_thickness(self, value: int) -> None:
         if self._syncing or not self.thickness_spin.isEnabled():
             return
@@ -472,21 +527,35 @@ class MainWindow(QMainWindow):
         self._syncing = True
         texts = [item for item in self.scene.selected_annotations() if isinstance(item, AnnotationTextItem)]
         arrows = [item for item in self.scene.selected_annotations() if isinstance(item, ArrowItem)]
+        ellipses = [item for item in self.scene.selected_annotations() if isinstance(item, EllipseItem)]
         if texts:
             self.font_spin.setValue(int(round(texts[0].font_size())))
         else:
             self.font_spin.setValue(int(round(self.scene.default_font_size)))
-        self.angle_spin.setEnabled(bool(arrows))
-        self.length_spin.setEnabled(bool(arrows))
-        self.thickness_spin.setEnabled(bool(arrows))
+        shaped = bool(arrows or ellipses)
+        self.angle_spin.setEnabled(shaped)
+        self.length_spin.setEnabled(shaped)
+        self.height_spin.setEnabled(bool(ellipses))
+        self.thickness_spin.setEnabled(shaped)
         if arrows:
+            self.length_label.setText("Length")
             self.angle_spin.setValue(int(round(normalize_angle(arrows[0].rotation()))))
             self.length_spin.setValue(int(round(arrows[0].length())))
             self.thickness_spin.setValue(int(round(arrows[0].thickness())))
+        elif ellipses:
+            self.length_label.setText("Width")
+            self.angle_spin.setValue(int(round(normalize_angle(ellipses[0].rotation()))))
+            self.length_spin.setValue(int(round(ellipses[0].width())))
+            self.thickness_spin.setValue(int(round(ellipses[0].thickness())))
         else:
+            self.length_label.setText("Length")
             self.angle_spin.setValue(0)
             self.length_spin.setValue(int(round(self.scene.default_arrow_length)))
             self.thickness_spin.setValue(int(round(self.scene.default_arrow_thickness)))
+        if ellipses:
+            self.height_spin.setValue(int(round(ellipses[0].height())))
+        else:
+            self.height_spin.setValue(int(round(self.scene.default_ellipse_height)))
         selected = self.scene.selected_annotations()
         if selected:
             self._check_color(selected[0].color())
@@ -541,6 +610,8 @@ class MainWindow(QMainWindow):
             "select": "Drag to move. Double-click text to edit. Delete removes the selection.",
             "text": "Click the image to place text.",
             "arrow": "Click to drop an arrow, or drag to aim it. Shift snaps rotation to 15°.",
+            "double": "Click to drop a double-headed arrow, or drag to aim it. Shift snaps rotation to 15°.",
+            "circle": "Click to drop a circle, or drag to draw an oval. Shift keeps the drag circular.",
         }
         count = len(self.scene.annotation_items())
         suffix = f"  ·  {count} annotation" + ("" if count == 1 else "s")

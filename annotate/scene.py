@@ -18,7 +18,16 @@ from annotate.commands import (
     ResizeImageCommand,
     props_equal,
 )
-from annotate.items import MIN_LENGTH, ArrowItem, AnnotationTextItem
+from annotate.geometry import ellipse_box
+from annotate.items import (
+    MIN_LENGTH,
+    MIN_SPAN,
+    AnnotationTextItem,
+    ArrowItem,
+    DoubleArrowItem,
+    EllipseItem,
+    is_annotation,
+)
 from annotate.style import app_font_family
 
 
@@ -46,6 +55,8 @@ class AnnotationScene(QGraphicsScene):
         self.default_font_size = 32.0
         self.default_arrow_length = 170.0
         self.default_arrow_thickness = 18.0
+        self.default_ellipse_width = 120.0
+        self.default_ellipse_height = 120.0
         self.font_family = app_font_family()
 
     def has_image(self) -> bool:
@@ -63,8 +74,7 @@ class AnnotationScene(QGraphicsScene):
         return list(self._items)
 
     def selected_annotations(self) -> list:
-        wanted = (AnnotationTextItem, ArrowItem)
-        return [item for item in self.selectedItems() if isinstance(item, wanted)]
+        return [item for item in self.selectedItems() if is_annotation(item)]
 
     def next_z(self) -> float:
         self._z += 1
@@ -159,6 +169,48 @@ class AnnotationScene(QGraphicsScene):
         self.undo_stack.push(AddCommand(self, item, "Add arrow"))
         return item
 
+    def add_double_arrow(
+        self,
+        center: QPointF,
+        length: float | None = None,
+        thickness: float | None = None,
+        rotation: float = 0.0,
+        color=None,
+        outline: bool | None = None,
+    ) -> DoubleArrowItem:
+        item = DoubleArrowItem(
+            length=self.default_arrow_length if length is None else length,
+            thickness=self.default_arrow_thickness if thickness is None else thickness,
+            color=self.default_color if color is None else color,
+            outline=self.default_outline if outline is None else outline,
+            rotation=rotation,
+        )
+        item.setPos(center)
+        self.undo_stack.push(AddCommand(self, item, "Add double arrow"))
+        return item
+
+    def add_ellipse(
+        self,
+        center: QPointF,
+        width: float | None = None,
+        height: float | None = None,
+        thickness: float | None = None,
+        rotation: float = 0.0,
+        color=None,
+        outline: bool | None = None,
+    ) -> EllipseItem:
+        item = EllipseItem(
+            width=self.default_ellipse_width if width is None else width,
+            height=self.default_ellipse_height if height is None else height,
+            thickness=self.default_arrow_thickness if thickness is None else thickness,
+            color=self.default_color if color is None else color,
+            outline=self.default_outline if outline is None else outline,
+            rotation=rotation,
+        )
+        item.setPos(center)
+        self.undo_stack.push(AddCommand(self, item, "Add oval"))
+        return item
+
     def add_arrow_between(self, start: QPointF, end: QPointF) -> ArrowItem:
         distance = math.hypot(end.x() - start.x(), end.y() - start.y())
         if distance < 10.0:
@@ -166,6 +218,27 @@ class AnnotationScene(QGraphicsScene):
         center = QPointF((start.x() + end.x()) / 2.0, (start.y() + end.y()) / 2.0)
         rotation = math.degrees(math.atan2(end.y() - start.y(), end.x() - start.x()))
         return self.add_arrow(center, length=max(distance, MIN_LENGTH), rotation=rotation)
+
+    def add_double_arrow_between(self, start: QPointF, end: QPointF) -> DoubleArrowItem:
+        distance = math.hypot(end.x() - start.x(), end.y() - start.y())
+        if distance < 10.0:
+            return self.add_double_arrow(start, rotation=-32.0)
+        center = QPointF((start.x() + end.x()) / 2.0, (start.y() + end.y()) / 2.0)
+        rotation = math.degrees(math.atan2(end.y() - start.y(), end.x() - start.x()))
+        return self.add_double_arrow(center, length=max(distance, MIN_LENGTH), rotation=rotation)
+
+    def add_ellipse_between(self, start: QPointF, end: QPointF, constrain: bool = False) -> EllipseItem:
+        center_x, center_y, width, height = ellipse_box(
+            start.x(),
+            start.y(),
+            end.x(),
+            end.y(),
+            constrain=constrain,
+            min_size=MIN_SPAN,
+            default_width=self.default_ellipse_width,
+            default_height=self.default_ellipse_height,
+        )
+        return self.add_ellipse(QPointF(center_x, center_y), width=width, height=height)
 
     def delete_selected(self) -> None:
         for item in self.selected_annotations():
@@ -250,7 +323,7 @@ class AnnotationScene(QGraphicsScene):
     def apply_rotation(self, angle: float) -> None:
         changes = []
         for item in self.selected_annotations():
-            if not isinstance(item, ArrowItem):
+            if not isinstance(item, (ArrowItem, EllipseItem)):
                 continue
             old = item.properties()
             item.set_angle(angle)
@@ -258,26 +331,49 @@ class AnnotationScene(QGraphicsScene):
         self.push_properties(changes, "Rotate", merge_key=("angle-spin", self._ids(changes)))
 
     def apply_length(self, length: float) -> None:
-        self.default_arrow_length = float(length)
+        arrows = [item for item in self.selected_annotations() if isinstance(item, ArrowItem)]
+        ellipses = [item for item in self.selected_annotations() if isinstance(item, EllipseItem)]
         changes = []
-        for item in self.selected_annotations():
-            if not isinstance(item, ArrowItem):
-                continue
+        if arrows or not ellipses:
+            self.default_arrow_length = float(length)
+        if ellipses and not arrows:
+            self.default_ellipse_width = float(length)
+        for item in arrows:
             old = item.properties()
             item.set_length(length, anchor="center")
             changes.append((item, old, item.properties()))
-        self.push_properties(changes, "Arrow length", merge_key=("length-spin", self._ids(changes)))
+        if not arrows:
+            for item in ellipses:
+                old = item.properties()
+                item.set_width(length, anchor="center")
+                changes.append((item, old, item.properties()))
+        label = "Oval width" if ellipses and not arrows else "Arrow length"
+        self.push_properties(changes, label, merge_key=("length-spin", self._ids(changes)))
+
+    def apply_height(self, height: float) -> None:
+        self.default_ellipse_height = float(height)
+        changes = []
+        for item in self.selected_annotations():
+            if not isinstance(item, EllipseItem):
+                continue
+            old = item.properties()
+            item.set_height(height, anchor="center")
+            changes.append((item, old, item.properties()))
+        self.push_properties(changes, "Oval height", merge_key=("height-spin", self._ids(changes)))
 
     def apply_thickness(self, thickness: float) -> None:
         self.default_arrow_thickness = float(thickness)
         changes = []
         for item in self.selected_annotations():
-            if not isinstance(item, ArrowItem):
+            if not isinstance(item, (ArrowItem, EllipseItem)):
                 continue
             old = item.properties()
             item.set_thickness(thickness)
             changes.append((item, old, item.properties()))
-        self.push_properties(changes, "Arrow thickness", merge_key=("thick-spin", self._ids(changes)))
+        label = "Oval thickness" if any(isinstance(item, EllipseItem) for item, _old, _new in changes) and not any(
+            isinstance(item, ArrowItem) for item, _old, _new in changes
+        ) else "Arrow thickness"
+        self.push_properties(changes, label, merge_key=("thick-spin", self._ids(changes)))
 
     def resize_image(self, width: int, height: int) -> bool:
         if self._image.isNull():
